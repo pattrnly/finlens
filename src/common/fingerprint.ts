@@ -6,6 +6,7 @@ export function fingerprint(parts: {
   date: string;
   amountPaise: number;
   ref: string;
+  balanceAfterPaise?: number;
 }): string {
   const raw = [
     parts.userId,
@@ -13,6 +14,7 @@ export function fingerprint(parts: {
     parts.date,
     String(parts.amountPaise),
     normalizeNarration(parts.ref),
+    ...(parts.balanceAfterPaise != null ? [String(parts.balanceAfterPaise)] : []),
   ].join('|');
   return createHash('sha256').update(raw).digest('hex');
 }

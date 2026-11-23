@@ -176,7 +176,8 @@ export function classifyRow(
     type !== 'reversal' &&
     type !== 'interest' &&
     type !== 'emi' &&
-    type !== 'part_payment'
+    type !== 'part_payment' &&
+    !looksLikeInboundBankCredit(n, isCredit)
   ) {
     type = 'transfer';
     categorySlug = 'transfer';
@@ -229,6 +230,13 @@ export function looksLikePartPayment(narration: string, isCredit: boolean) {
 export const EMI_NARRATION_RE =
   /\bEMI\b|ACH D-\s*HDFC BANK|\bEHDF|HDFC LTD|\bNACH\b.*\b(EMI|LOAN)\b|\bLOAN\s*(EMI|INSTAL)|\bECS\b.*\b(EMI|LOAN)\b/i;
 
+export function looksLikeInboundBankCredit(narration: string, isCredit: boolean) {
+  if (!isCredit) return false;
+  const n = narration || '';
+  if (/UPI\/(?:CR|DR|REF)/i.test(n)) return false;
+  return /^(DEP TFR|CREDIT)\b/i.test(n) || /\bNEFT\*/i.test(n) || /\bCMPIFT\//i.test(n);
+}
+
 export function isSelfTransfer(narration: string, last4s: string[] = []) {
   const n = familySearchText(narration) || narration;
   if (last4s.some((l4) => l4 && n.includes(l4))) return true;
@@ -261,7 +269,13 @@ export function finalizeRecognisedType(input: {
   const emi = guessed === 'emi' || looksLikeEmi(input.narration, input.isCredit);
   const partPayment =
     guessed === 'part_payment' || looksLikePartPayment(input.narration, input.isCredit);
-  if (familyHit && !SPECIAL_CREDIT.has(guessed) && !emi && !partPayment) {
+  if (
+    familyHit &&
+    !SPECIAL_CREDIT.has(guessed) &&
+    !emi &&
+    !partPayment &&
+    !looksLikeInboundBankCredit(input.narration, input.isCredit)
+  ) {
     return { type: 'transfer', familyHit, categorySlug: 'transfer', classifiedBy: 'family' };
   }
   const ruleHit = matchClassifyRule(

@@ -40,6 +40,38 @@ describe('EMI classification', () => {
     expect(row.categorySlug).toBe('part-payment');
   });
 
+  it('keeps SBI NEFT credits as income even if the beneficiary matches family', () => {
+    const row = classifyRow(
+      {
+        date: new Date('2026-11-01'),
+        narration: 'DEP TFR NEFT*SURY0BK0000*SURYN2630 5556954*VORA SEFALI ASH',
+        debitPaise: 0,
+        creditPaise: 2152200,
+      },
+      [],
+      [],
+      [{ name: 'Sefali', aliases: ['Vora'] }],
+    );
+    expect(row.type).toBe('income');
+    expect(row.creditPaise).toBe(2152200);
+  });
+
+  it('still tags family UPI credits as transfers', () => {
+    const row = classifyRow(
+      {
+        date: new Date('2026-11-07'),
+        narration: 'DEP TFR UPI/CR/667777936784/UTSAV KA/PPIW/7567368068/UPI',
+        debitPaise: 0,
+        creditPaise: 5000,
+      },
+      [],
+      [],
+      [{ name: 'Utsav' }],
+    );
+    expect(row.type).toBe('transfer');
+    expect(row.creditPaise).toBe(5000);
+  });
+
   it('applies bank and amount classify rules', () => {
     const row = classifyRow(
       {

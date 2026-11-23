@@ -41,6 +41,7 @@ export function parseSbi(text: string): ParseResult {
       current.credit,
       current.balance,
       prevBalance,
+      current.type,
     );
     const date = parseBankDate(current.txnDate);
     if (date && (debit || credit)) {
@@ -106,10 +107,26 @@ export function parseSbi(text: string): ParseResult {
   return { header, rows, method: 'sbi_builtin' };
 }
 
-function direction(printedDebit: number, printedCredit: number, balance: number, prev: number) {
+function direction(
+  printedDebit: number,
+  printedCredit: number,
+  balance: number,
+  prev: number,
+  typeHint: string,
+) {
+  const delta = balance - prev;
+  if (prev !== 0 && Math.abs(delta) > 1) {
+    if (delta > 0) return { debit: 0, credit: Math.abs(delta) };
+    return { debit: Math.abs(delta), credit: 0 };
+  }
+  if (/^(DEP|CREDIT)\b/i.test(typeHint)) {
+    return { debit: 0, credit: printedCredit || printedDebit };
+  }
+  if (/^(WDL|DEBIT)\b/i.test(typeHint)) {
+    return { debit: printedDebit || printedCredit, credit: 0 };
+  }
   if (printedDebit && !printedCredit) return { debit: printedDebit, credit: 0 };
   if (printedCredit && !printedDebit) return { debit: 0, credit: printedCredit };
-  const delta = balance - prev;
   if (delta > 0) return { debit: 0, credit: delta };
   if (delta < 0) return { debit: Math.abs(delta), credit: 0 };
   return { debit: printedDebit, credit: printedCredit };

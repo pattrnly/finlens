@@ -77,9 +77,13 @@ export class TransactionsService implements OnModuleInit {
       userId: new Types.ObjectId(userId),
       isDeleted: false,
     };
+    const also: Record<string, unknown>[] = [];
     if (q.type) filter.type = q.type;
-    else if (q.direction === 'credit') filter.type = { $in: CREDIT_TYPES };
-    else if (q.direction === 'debit') filter.type = { $nin: CREDIT_TYPES };
+    else if (q.direction === 'credit') {
+      also.push({ $or: [{ isCredit: true }, { isCredit: { $exists: false }, type: { $in: CREDIT_TYPES } }] });
+    } else if (q.direction === 'debit') {
+      also.push({ $or: [{ isCredit: false }, { isCredit: { $exists: false }, type: { $nin: CREDIT_TYPES } }] });
+    }
     if (q.accountId && Types.ObjectId.isValid(q.accountId)) {
       filter.accountId = new Types.ObjectId(q.accountId);
     }
@@ -95,11 +99,14 @@ export class TransactionsService implements OnModuleInit {
       };
     }
     if (q.search) {
-      filter.$or = [
-        { narration: { $regex: q.search, $options: 'i' } },
-        { merchant: { $regex: q.search, $options: 'i' } },
-      ];
+      also.push({
+        $or: [
+          { narration: { $regex: q.search, $options: 'i' } },
+          { merchant: { $regex: q.search, $options: 'i' } },
+        ],
+      });
     }
+    if (also.length) filter.$and = also;
     const amount = amountFilter(q);
     if (amount) filter.amountPaise = amount;
     if (q.source === 'manual' || q.source === 'statement' || q.source === 'recurring') {
@@ -128,6 +135,7 @@ export class TransactionsService implements OnModuleInit {
       source?: string;
       upiRef?: string;
       balanceAfterPaise?: number;
+      isCredit?: boolean;
       statementId?: Types.ObjectId | string;
       fingerprint?: string;
       counterpartyAccountId?: Types.ObjectId | string;
@@ -140,18 +148,23 @@ export class TransactionsService implements OnModuleInit {
       userId: new Types.ObjectId(userId),
     });
     if (!account) throw new NotFoundException('Account not found');
-    const fp = fingerprint({
-      userId,
-      accountLast4: account.last4 ?? String(account._id).slice(-4),
-      date: isoDate(data.date),
-      amountPaise: data.amountPaise,
-      ref: data.upiRef || data.narration || normalizeNarration(String(Date.now())),
-    });
     const type = coerceTxType(data.type);
+    const isCredit = data.isCredit ?? CREDIT_TYPES.includes(type);
+    const fp =
+      data.fingerprint ||
+      fingerprint({
+        userId,
+        accountLast4: account.last4 ?? String(account._id).slice(-4),
+        date: isoDate(data.date),
+        amountPaise: data.amountPaise,
+        ref: data.upiRef || data.narration || normalizeNarration(String(Date.now())),
+        balanceAfterPaise: data.balanceAfterPaise,
+      });
     const excluded = data.excludedFromReports ?? type === 'transfer';
     const payload = {
       ...data,
       type,
+      isCredit,
       userId: new Types.ObjectId(userId),
       accountId: new Types.ObjectId(String(data.accountId)),
       categoryId: data.categoryId ? new Types.ObjectId(String(data.categoryId)) : undefined,
@@ -193,7 +206,10 @@ export class TransactionsService implements OnModuleInit {
     const oldAccount = doc.accountId;
 
     if (data.accountId) doc.accountId = new Types.ObjectId(String(data.accountId));
-    if (data.type) doc.type = coerceTxType(data.type);
+    if (data.type) {
+      doc.type = coerceTxType(data.type);
+      doc.isCredit = CREDIT_TYPES.includes(doc.type);
+    }
     if (data.date) doc.date = data.date as Date;
     if (data.amountPaise != null) doc.amountPaise = data.amountPaise;
     if (data.merchant !== undefined) doc.merchant = data.merchant;

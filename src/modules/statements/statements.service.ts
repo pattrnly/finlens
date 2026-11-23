@@ -426,6 +426,7 @@ export class StatementsService implements OnModuleInit {
           date: isoDate(classified.date),
           amountPaise: amount,
           ref: classified.upiRef || classified.narration,
+          balanceAfterPaise: classified.balanceAfterPaise,
         });
         const dup = await this.txs.findOne({
           userId: stmt.userId,
@@ -600,8 +601,9 @@ export class StatementsService implements OnModuleInit {
     const rows = await this.rows.find(filter);
     let created = 0;
     for (const row of rows) {
-      const amount = row.debitPaise || row.creditPaise;
-      const type = coerceTxType(row.type ?? (row.creditPaise ? 'transfer' : 'expense'));
+      const isCredit = row.creditPaise > 0;
+      const amount = isCredit ? row.creditPaise : row.debitPaise;
+      const type = coerceTxType(row.type ?? (isCredit ? 'income' : 'expense'));
       try {
         await this.ledger.create(String(stmt.userId), {
           accountId: String(stmt.accountId),
@@ -609,6 +611,7 @@ export class StatementsService implements OnModuleInit {
           channel: row.channel ?? 'other',
           date: row.date,
           amountPaise: amount,
+          isCredit,
           categoryId: row.categoryId,
           subcategoryId: row.subcategoryId,
           merchant: row.merchant,
@@ -623,6 +626,7 @@ export class StatementsService implements OnModuleInit {
             date: isoDate(row.date),
             amountPaise: amount,
             ref: row.upiRef || row.narration,
+            balanceAfterPaise: row.balanceAfterPaise,
           }),
           counterpartyAccountId: row.counterpartyAccountId,
           excludedFromReports: row.isInternalTransfer || row.excludedFromSpend || type === 'transfer',

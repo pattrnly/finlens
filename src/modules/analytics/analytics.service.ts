@@ -25,6 +25,7 @@ type TxRow = {
   date: Date;
   narration?: string;
   merchant?: string;
+  isCredit?: boolean;
   excludedFromReports?: boolean;
   categoryId?: Types.ObjectId;
   subcategoryId?: Types.ObjectId;
@@ -363,12 +364,14 @@ function normalizeType(type: string) {
   return type === 'fee' ? 'expense' : type;
 }
 
-function isCreditSide(t: { type: string; narration?: string }) {
+function isCreditSide(t: { type: string; narration?: string; isCredit?: boolean }) {
+  if (t.isCredit === true) return true;
+  if (t.isCredit === false) return false;
   const type = normalizeType(t.type);
   if (['income', 'refund', 'reversal', 'interest'].includes(type)) return true;
-  const head = (t.narration ?? '').slice(0, 80);
-  if (/UPI\/CR/i.test(head)) return true;
-  if (/UPI\/DR/i.test(head) || /^POS-/i.test(head)) return false;
+  const head = (t.narration ?? '').slice(0, 120);
+  if (/UPI\/CR/i.test(head) || /^(DEP TFR|CREDIT)\b/i.test(head)) return true;
+  if (/UPI\/DR/i.test(head) || /^(WDL TFR|DEBIT)\b/i.test(head) || /^POS-/i.test(head)) return false;
   return false;
 }
 

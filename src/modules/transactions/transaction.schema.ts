@@ -23,6 +23,9 @@ export class Transaction {
   @Prop({ required: true })
   amountPaise: number;
 
+  @Prop()
+  isCredit?: boolean;
+
   @Prop({ type: Types.ObjectId, ref: 'Category' })
   categoryId?: Types.ObjectId;
 
