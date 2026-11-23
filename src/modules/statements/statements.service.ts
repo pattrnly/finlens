@@ -36,6 +36,7 @@ import { parseAuBank } from './parsers/au-bank.parser';
 import { parseHdfc } from './parsers/hdfc.parser';
 import { parseIdfcFirst } from './parsers/idfc-first.parser';
 import { parseIndusind } from './parsers/indusind.parser';
+import { parseSbi } from './parsers/sbi.parser';
 import type { ExtractedHeader, ExtractedRow, ParseResult } from './parsers/types';
 import { extractPdfText, unlockPdf } from './pdf-text';
 import { Statement, StatementDocument, StatementRow, StatementRowDocument } from './statement.schema';
@@ -111,6 +112,18 @@ export class StatementsService implements OnModuleInit {
           wrapContinuesWithoutDate: true,
           amountMode: 'debit_credit',
           skipRegexes: ['INDUSIND BANK LTD', 'computer generated statement'],
+        },
+      },
+      {
+        bankCode: 'sbi',
+        bankName: 'State Bank of India',
+        fingerprints: ['STATE BANK OF INDIA', 'SBIN', 'sbi.co.in'],
+        layout: {
+          dateFormat: 'dd/MM/yyyy',
+          sortOrder: 'asc',
+          wrapContinuesWithoutDate: true,
+          amountMode: 'debit_credit',
+          skipRegexes: ['computer generated statement', 'Page no.'],
         },
       },
     ];
@@ -280,6 +293,7 @@ export class StatementsService implements OnModuleInit {
       else if (detected.code === 'au_bank') parsed = parseAuBank(text);
       else if (detected.code === 'hdfc') parsed = parseHdfc(text);
       else if (detected.code === 'indusind') parsed = parseIndusind(text);
+      else if (detected.code === 'sbi') parsed = parseSbi(text);
 
       const profile = await this.profiles.findOne({
         bankCode: detected.code,
@@ -1249,6 +1263,7 @@ function applyProfile(
   if (detected.code === 'au_bank') return parseAuBank(text);
   if (detected.code === 'hdfc') return parseHdfc(text);
   if (detected.code === 'indusind') return parseIndusind(text);
+  if (detected.code === 'sbi') return parseSbi(text);
   return null;
 }
 

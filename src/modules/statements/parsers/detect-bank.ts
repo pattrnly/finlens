@@ -40,7 +40,11 @@ export function detectBank(text: string): { code: BankCode; name: string } {
   if (/ICICI\s*BANK/i.test(text) || /IFSC\s*:?\s*ICIC\d{4,}/i.test(text)) {
     return { code: 'icici', name: 'ICICI Bank' };
   }
-  if (/STATE BANK OF INDIA/i.test(text) || /IFSC\s*:?\s*SBIN\d{4,}/i.test(text)) {
+  if (
+    /STATE BANK OF INDIA/i.test(text) ||
+    /IFSC(?:\s*Code)?\s*:?\s*SBIN\d{4,}/i.test(text) ||
+    /@sbi\.co\.in/i.test(t)
+  ) {
     return { code: 'sbi', name: 'State Bank of India' };
   }
   if (/AXIS\s*BANK/i.test(text) || /IFSC\s*:?\s*UTIB\d{4,}/i.test(text)) {
