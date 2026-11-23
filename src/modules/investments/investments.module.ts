@@ -1,0 +1,23 @@
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import {
+  Investment,
+  InvestmentLot,
+  InvestmentLotSchema,
+  InvestmentSchema,
+} from './investment.schema';
+import { InvestmentsController } from './investments.controller';
+import { InvestmentsService } from './investments.service';
+
+@Module({
+  imports: [
+    MongooseModule.forFeature([
+      { name: Investment.name, schema: InvestmentSchema },
+      { name: InvestmentLot.name, schema: InvestmentLotSchema },
+    ]),
+  ],
+  controllers: [InvestmentsController],
+  providers: [InvestmentsService],
+  exports: [InvestmentsService],
+})
+export class InvestmentsModule {}
