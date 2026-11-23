@@ -11,6 +11,7 @@ import { Model, Types } from 'mongoose';
 import { decryptSecret, encryptSecret, keyHint } from '../../common/secret';
 import { coerceTxType } from '../../common/types';
 import { ownedFilter } from '../../common/object-id';
+import { parseLlmJson } from '../../common/parse-llm-json';
 import { JobCancelledError } from '../redis/redis.service';
 import { AI_CATALOG, catalogEntry } from './ai.catalog';
 import { AiProvider, AiProviderDocument } from './ai-provider.schema';
@@ -178,7 +179,7 @@ export class AiService {
     try {
       const result = await this.callProvider(item, 'Return JSON {"ok":true} and nothing else.');
       if (!result.text.trim()) throw new Error('Empty response');
-      const parsed = JSON.parse(stripFence(result.text)) as { ok?: boolean };
+      const parsed = parseLlmJson<{ ok?: boolean }>(result.text);
       if (item.doc) {
         item.doc.lastOkAt = new Date();
         item.doc.lastError = undefined;
@@ -229,7 +230,7 @@ export class AiService {
       try {
         const result = await this.callProvider(item, prompt);
         if (!result.text.trim()) throw new Error('Empty response');
-        const parsed = JSON.parse(stripFence(result.text)) as T;
+        const parsed = parseLlmJson<T>(result.text);
         this.lastUsed = { id: result.providerId, name: result.providerName };
         if (item.doc) {
           item.doc.lastOkAt = new Date();
@@ -270,7 +271,7 @@ export class AiService {
   ): Promise<{ rows: ClassifyAiRow[]; used?: { id: string; name: string } }> {
     if (!rows.length) return { rows: [] };
     const out: ClassifyAiRow[] = [];
-    const size = 35;
+    const size = 20;
     const total = rows.length;
     await onProgress?.(0, total);
     for (let i = 0; i < rows.length; i += size) {
@@ -441,7 +442,7 @@ export class AiService {
         contents,
         generationConfig: {
           responseMimeType: 'application/json',
-          maxOutputTokens: 2048,
+          maxOutputTokens: 8192,
           thinkingConfig: { thinkingLevel: 'LOW' },
         },
       },
@@ -449,11 +450,11 @@ export class AiService {
         contents,
         generationConfig: {
           responseMimeType: 'application/json',
-          maxOutputTokens: 2048,
+          maxOutputTokens: 8192,
           thinkingConfig: { thinkingBudget: 0 },
         },
       },
-      { contents, generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 1024 } },
+      { contents, generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 4096 } },
     ];
     let lastErr: Error | undefined;
     for (const payload of payloads) {
@@ -488,7 +489,7 @@ export class AiService {
       kind === 'grok'
         ? {
             model: resolved,
-            max_completion_tokens: 1024,
+            max_completion_tokens: 4096,
             reasoning_effort: 'none',
             response_format: { type: 'json_object' },
             messages,
@@ -496,6 +497,7 @@ export class AiService {
         : {
             model: resolved,
             temperature: 0,
+            max_tokens: 4096,
             response_format: { type: 'json_object' },
             messages,
           },
@@ -707,8 +709,13 @@ function friendlyAiError(kind: string, err: unknown) {
   if (lower.includes('429') || lower.includes('quota') || lower.includes('rate')) {
     return `${catalogEntry(kind)?.name ?? 'AI'} hit its rate limit. FinLens will switch to another service when more than one key is saved.`;
   }
-  if (err instanceof SyntaxError || raw.startsWith('Unexpected token') || lower.includes('is not valid json')) {
-    return `${catalogEntry(kind)?.name ?? 'AI'} did not return JSON: ${raw.slice(0, 180)}`;
+  if (
+    err instanceof SyntaxError ||
+    raw.startsWith('Unexpected token') ||
+    lower.includes('is not valid json') ||
+    lower.includes('double-quoted property name')
+  ) {
+    return `${catalogEntry(kind)?.name ?? 'AI'} returned incomplete JSON. Try Recognise again.`;
   }
   return raw;
 }
@@ -728,10 +735,6 @@ function isFailoverError(err: unknown) {
     msg.includes('econnreset') ||
     msg.includes('fetch failed')
   );
-}
-
-function stripFence(s: string) {
-  return s.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
 }
 
 function classifyPrompt(
@@ -755,7 +758,7 @@ ${familyRule}- Salary / payroll is type "income".
 - Allowed types: expense, income, transfer, investment, refund, reversal, emi, interest, part_payment.
 Pick categorySlug (and subcategorySlug when it is a child) only from this list:
 ${JSON.stringify(slugs)}
-Return JSON {"rows":[{"i":0,"type":"expense","merchant":"...","categorySlug":"...","subcategorySlug":"","isTransfer":false}]}
+Return only valid JSON with double-quoted keys and no trailing commas: {"rows":[{"i":0,"type":"expense","merchant":"...","categorySlug":"...","subcategorySlug":"","isTransfer":false}]}
 ROWS:
 ${JSON.stringify(rows)}`;
 }
