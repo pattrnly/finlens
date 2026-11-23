@@ -288,12 +288,15 @@ export class StatementsService implements OnModuleInit {
       stmt.bankCode = detected.code;
       stmt.bankName = detected.name;
 
-      let parsed: ParseResult | null = null;
-      if (detected.code === 'idfc_first') parsed = parseIdfcFirst(text);
-      else if (detected.code === 'au_bank') parsed = parseAuBank(text);
-      else if (detected.code === 'hdfc') parsed = parseHdfc(text);
-      else if (detected.code === 'indusind') parsed = parseIndusind(text);
-      else if (detected.code === 'sbi') parsed = parseSbi(text);
+      let parsed = parseKnownLayout(detected.code, text);
+      if (!parsed?.rows.length) {
+        const fallback = parseKnownLayoutFallback(detected.code, text);
+        if (fallback?.rows.length) {
+          parsed = fallback;
+          stmt.bankCode = fallback.header.bankCode;
+          stmt.bankName = fallback.header.bankName;
+        }
+      }
 
       const profile = await this.profiles.findOne({
         bankCode: detected.code,
@@ -1258,17 +1261,30 @@ TEXT:\n${snippet}`,
   }
 }
 
+function parseKnownLayout(code: string, text: string): ParseResult | null {
+  if (code === 'idfc_first') return parseIdfcFirst(text);
+  if (code === 'au_bank') return parseAuBank(text);
+  if (code === 'hdfc') return parseHdfc(text);
+  if (code === 'indusind') return parseIndusind(text);
+  if (code === 'sbi') return parseSbi(text);
+  return null;
+}
+
+function parseKnownLayoutFallback(detectedCode: string, text: string): ParseResult | null {
+  for (const code of ['sbi', 'hdfc', 'idfc_first', 'au_bank', 'indusind']) {
+    if (code === detectedCode) continue;
+    const attempt = parseKnownLayout(code, text);
+    if (attempt?.rows.length) return attempt;
+  }
+  return null;
+}
+
 function applyProfile(
   text: string,
   _profile: ParserProfileDocument,
   detected: { code: string; name: string },
 ): ParseResult | null {
-  if (detected.code === 'idfc_first') return parseIdfcFirst(text);
-  if (detected.code === 'au_bank') return parseAuBank(text);
-  if (detected.code === 'hdfc') return parseHdfc(text);
-  if (detected.code === 'indusind') return parseIndusind(text);
-  if (detected.code === 'sbi') return parseSbi(text);
-  return null;
+  return parseKnownLayout(detected.code, text);
 }
 
 function isJobCancelled(err: unknown) {
