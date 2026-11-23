@@ -9,9 +9,15 @@ import { InjectModel } from '@nestjs/mongoose';
 import { AsyncLocalStorage } from 'async_hooks';
 import { basename } from 'path';
 import { Model, Types } from 'mongoose';
-import { isoDate, statementMonthLabel } from '../../common/dates';
+import { endOfIstDay, isoDate, startOfIstDay, statementMonthLabel } from '../../common/dates';
 import { extractUpiRrn, fingerprint, normalizeNarration } from '../../common/fingerprint';
 import { isDuplicateKeyError } from '../../common/mongo-error';
+import {
+  findDuplicateMatch,
+  identityFromStatementRow,
+  identityFromTransaction,
+  type LedgerIdentity,
+} from '../../common/tx-duplicate';
 import { rupeesToPaise } from '../../common/money';
 import { Account, AccountDocument } from '../accounts/account.schema';
 import { AiService } from '../ai/ai.service';
@@ -431,11 +437,6 @@ export class StatementsService implements OnModuleInit {
           ref: classified.upiRef || classified.narration,
           balanceAfterPaise: classified.balanceAfterPaise,
         });
-        const dup = await this.txs.findOne({
-          userId: stmt.userId,
-          fingerprint: fp,
-          isDeleted: { $ne: true },
-        });
         const counterparty = this.findCounterparty(classified, accounts, stmt.accountId);
         const ids = idsFromSlug(classified.categorySlug, cats);
         docs.push({
@@ -454,7 +455,7 @@ export class StatementsService implements OnModuleInit {
           categoryId: ids.categoryId,
           subcategoryId: ids.subcategoryId,
           confidence: classified.confidence,
-          isDuplicate: Boolean(dup),
+          isDuplicate: false,
           isInternalTransfer: Boolean(counterparty) || classified.type === 'transfer',
           counterpartyAccountId: counterparty?._id,
           excludedFromSpend: classified.excludedFromSpend || Boolean(counterparty),
@@ -462,6 +463,7 @@ export class StatementsService implements OnModuleInit {
           classifiedBy: classified.classifiedBy ?? 'rules',
         });
       }
+      await this.markDuplicateRows(stmt, docs);
       if (docs.length) await this.rows.insertMany(docs);
       stmt.status = 'needs_review';
       stmt.classifyMethod = 'rules';
@@ -602,13 +604,30 @@ export class StatementsService implements OnModuleInit {
     if (body.rowIds?.length) filter._id = { $in: body.rowIds };
     else if (body.acceptHighConfidence) filter.confidence = { $gte: 0.8 };
     const rows = await this.rows.find(filter);
+    const ledgerIdentities = await this.loadLedgerIdentities(
+      stmt,
+      rows.map((r) => r.date),
+      rows.map((r) => r.fingerprint).filter((fp): fp is string => Boolean(fp)),
+    );
+    const claimed = new Set<string>();
     let created = 0;
     for (const row of rows) {
       const isCredit = row.creditPaise > 0;
       const amount = isCredit ? row.creditPaise : row.debitPaise;
       const type = coerceTxType(row.type ?? (isCredit ? 'income' : 'expense'));
+      const duplicateOf = findDuplicateMatch(
+        identityFromStatementRow(row),
+        ledgerIdentities,
+        claimed,
+      );
+      if (duplicateOf) {
+        if (duplicateOf.id) claimed.add(duplicateOf.id);
+        row.isDuplicate = true;
+        await row.save();
+        continue;
+      }
       try {
-        await this.ledger.create(String(stmt.userId), {
+        const booked = await this.ledger.create(String(stmt.userId), {
           accountId: String(stmt.accountId),
           type,
           channel: row.channel ?? 'other',
@@ -639,6 +658,7 @@ export class StatementsService implements OnModuleInit {
         row.accepted = true;
         row.isDuplicate = false;
         await row.save();
+        ledgerIdentities.push(identityFromTransaction(booked));
         if (row.merchant && row.categoryId) {
           await this.merchants.updateOne(
             { userId: stmt.userId, normalizedPayee: normalizeNarration(row.merchant) },
@@ -1027,6 +1047,63 @@ export class StatementsService implements OnModuleInit {
         statementId,
       }
     );
+  }
+
+  private async markDuplicateRows(
+    stmt: StatementDocument,
+    docs: Array<{
+      date: Date;
+      debitPaise: number;
+      creditPaise: number;
+      narration: string;
+      upiRef?: string;
+      balanceAfterPaise?: number;
+      fingerprint?: string;
+      isDuplicate: boolean;
+    }>,
+  ) {
+    if (!docs.length) return;
+    const existing = await this.loadLedgerIdentities(
+      stmt,
+      docs.map((d) => d.date),
+      docs.map((d) => d.fingerprint).filter((fp): fp is string => Boolean(fp)),
+    );
+    const claimed = new Set<string>();
+    for (const doc of docs) {
+      const match = findDuplicateMatch(identityFromStatementRow(doc), existing, claimed);
+      if (match?.id) claimed.add(match.id);
+      doc.isDuplicate = Boolean(match);
+    }
+  }
+
+  private async loadLedgerIdentities(
+    stmt: StatementDocument,
+    dates: Date[],
+    fingerprints: string[] = [],
+  ): Promise<LedgerIdentity[]> {
+    const or: Record<string, unknown>[] = [];
+    const uniqueFps = [...new Set(fingerprints.filter(Boolean))];
+    if (uniqueFps.length) or.push({ fingerprint: { $in: uniqueFps } });
+    const times = dates.map((d) => new Date(d).getTime()).filter((n) => !Number.isNaN(n));
+    if (stmt.accountId && times.length) {
+      or.push({
+        accountId: stmt.accountId,
+        date: {
+          $gte: startOfIstDay(isoDate(new Date(Math.min(...times)))),
+          $lte: endOfIstDay(isoDate(new Date(Math.max(...times)))),
+        },
+      });
+    }
+    if (!or.length) return [];
+    const txs = await this.txs
+      .find({
+        userId: stmt.userId,
+        isDeleted: { $ne: true },
+        $or: or,
+      })
+      .lean()
+      .exec();
+    return txs.map(identityFromTransaction);
   }
 
   private findCounterparty(
