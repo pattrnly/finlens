@@ -8,6 +8,7 @@ import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
 import dns from 'node:dns';
 import { AppModule } from './app.module';
+import { isAllowedCorsOrigin } from './common/cors-origin';
 import { AllExceptionsFilter } from './common/http-exception.filter';
 import { PlainInterceptor } from './common/plain.interceptor';
 
@@ -19,12 +20,20 @@ async function bootstrap() {
     AppModule,
     new FastifyAdapter({ logger: true, bodyLimit: 20 * 1024 * 1024 }),
   );
-  const origin = process.env.CLIENT_URL ?? 'http://localhost:5173';
   await app.register(cors as never, {
-    origin,
+    origin: (origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) => {
+      cb(null, isAllowedCorsOrigin(origin));
+    },
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    exposedHeaders: ['Content-Disposition'],
   });
-  await app.register(helmet as never, { contentSecurityPolicy: false });
+  await app.register(helmet as never, {
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  });
   await app.register(cookie as never);
   await app.register(multipart as never, {
     limits: { fileSize: 15 * 1024 * 1024 },
