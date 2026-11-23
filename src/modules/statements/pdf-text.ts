@@ -1,3 +1,4 @@
+import '../../common/promise-with-resolvers';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 
@@ -27,22 +28,18 @@ export async function extractPdfText(buffer: Buffer, password?: string): Promise
 }
 
 async function openPdf(buffer: Buffer, password?: string): Promise<PdfJsDoc> {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const workerPath = join(
-    process.cwd(),
-    'node_modules',
-    'pdfjs-dist',
-    'legacy',
-    'build',
-    'pdf.worker.mjs',
-  );
-  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(buffer),
-    verbosity: 0,
-    password: password || '',
-  } as never);
   try {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const workerSrc = pathToFileURL(
+      join(process.cwd(), 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.worker.mjs'),
+    ).href;
+    pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+    await import(workerSrc);
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      verbosity: 0,
+      password: password || '',
+    } as never);
     return (await loadingTask.promise) as PdfJsDoc;
   } catch (err) {
     throw new Error(passwordError(err, password));
