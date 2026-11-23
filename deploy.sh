@@ -1,22 +1,23 @@
-  GNU nano 6.2                                                                              deploy.sh
 #!/bin/bash
 set -e
 
-echo "🚀 Pulling latest code..."
+cd "$(dirname "$0")"
+
+echo "Pulling latest code..."
 git reset --hard
-git pull origin master
+git pull origin "$(git rev-parse --abbrev-ref HEAD)"
 
-echo "📦 Installing dependencies..."
-npm install --omit=dev
+echo "Installing dependencies..."
+npm install
 
-echo "🔁 Restarting finlens with PM2..."
-# pm2 update
+echo "Building..."
+npm run build
 
-# If process exists -> restart, else -> start
+echo "Restarting finlens with PM2..."
 if pm2 describe finlens-api > /dev/null; then
   pm2 restart finlens-api --update-env
 else
-  pm2 start src/app.js --name finlens-api   # adjust entry file if different
+  pm2 start dist/main.js --name finlens-api
 fi
 
 pm2 save
