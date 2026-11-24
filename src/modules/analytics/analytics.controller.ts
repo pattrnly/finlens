@@ -11,8 +11,22 @@ export class AnalyticsController {
   @Get('summary')
   summary(
     @CurrentUser() user: { userId: string },
-    @Query() q: { range?: string; from?: string; to?: string },
+    @Query()
+    q: {
+      range?: string;
+      from?: string;
+      to?: string;
+      accountId?: string;
+      categoryId?: string;
+      subcategoryId?: string;
+      type?: string;
+    },
   ) {
-    return this.svc.summary(user.userId, q.range ?? 'month', q.from, q.to);
+    return this.svc.summary(user.userId, q.range ?? 'month', q.from, q.to, {
+      accountId: q.accountId,
+      categoryId: q.categoryId,
+      subcategoryId: q.subcategoryId,
+      type: q.type,
+    });
   }
 }

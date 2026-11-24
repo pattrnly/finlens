@@ -31,6 +31,13 @@ type TxRow = {
   subcategoryId?: Types.ObjectId;
 };
 
+type AnalyticsFilters = {
+  accountId?: string;
+  categoryId?: string;
+  subcategoryId?: string;
+  type?: string;
+};
+
 type Bucket = {
   income: number;
   otherCredit: number;
@@ -56,7 +63,13 @@ export class AnalyticsService {
     private cache: RedisService,
   ) {}
 
-  async summary(userId: string, range: string, from?: string, to?: string) {
+  async summary(
+    userId: string,
+    range: string,
+    from?: string,
+    to?: string,
+    filters: AnalyticsFilters = {},
+  ) {
     const uid = new Types.ObjectId(userId);
     let { start, end, label } = await this.resolveRange(uid, range, from, to);
     const prev = range === 'all' ? null : previousWindow(start, end);
@@ -65,23 +78,22 @@ export class AnalyticsService {
     const yearStart = startOfIstDay(`${toZonedTime(end, IST).getFullYear() - 3}-01-01`);
     const queryStart = earliest(start, prev?.start, chartStart, yearStart);
 
-    const key = `analytics:v3:${userId}:${isoDate(start)}:${endIso}:${range}`;
-    const cached = await this.cache.getJson<unknown>(key);
-    if (cached) return cached;
-
-    const rows = (await this.txs
-      .find({
-        userId: uid,
-        isDeleted: false,
-        date: { $gte: queryStart, $lte: end },
-      })
-      .lean()
-      .exec()) as TxRow[];
-
     const cats = await this.categories.find({
       $or: [{ isSystem: true }, { userId: uid }],
     });
     const catById = new Map(cats.map((c) => [String(c._id), c]));
+    const txFilter = buildTxFilter(uid, queryStart, end, filters, cats);
+    const filterKey = [
+      filters.accountId || '',
+      filters.categoryId || '',
+      filters.subcategoryId || '',
+      filters.type || '',
+    ].join(':');
+    const key = `analytics:v4:${userId}:${isoDate(start)}:${endIso}:${range}:${filterKey}`;
+    const cached = await this.cache.getJson<unknown>(key);
+    if (cached) return cached;
+
+    const rows = (await this.txs.find(txFilter).lean().exec()) as TxRow[];
 
     const inRange: TxRow[] = [];
     const previous: TxRow[] = [];
@@ -341,6 +353,37 @@ export class AnalyticsService {
     const m = monthRange(now);
     return { start: m.from, end: m.to, label: 'month' };
   }
+}
+
+function buildTxFilter(
+  uid: Types.ObjectId,
+  queryStart: Date,
+  end: Date,
+  filters: AnalyticsFilters,
+  cats: Array<{ _id: Types.ObjectId; parentId?: Types.ObjectId }>,
+) {
+  const find: Record<string, unknown> = {
+    userId: uid,
+    isDeleted: false,
+    date: { $gte: queryStart, $lte: end },
+  };
+  if (filters.accountId && Types.ObjectId.isValid(filters.accountId)) {
+    find.accountId = new Types.ObjectId(filters.accountId);
+  }
+  if (filters.type) {
+    find.type = filters.type === 'expense' ? { $in: ['expense', 'fee'] } : filters.type;
+  }
+  if (filters.subcategoryId && Types.ObjectId.isValid(filters.subcategoryId)) {
+    find.subcategoryId = new Types.ObjectId(filters.subcategoryId);
+  } else if (filters.categoryId && Types.ObjectId.isValid(filters.categoryId)) {
+    const parent = filters.categoryId;
+    const ids = [
+      new Types.ObjectId(parent),
+      ...cats.filter((c) => String(c.parentId) === parent).map((c) => c._id),
+    ];
+    find.$or = [{ categoryId: { $in: ids } }, { subcategoryId: { $in: ids } }];
+  }
+  return find;
 }
 
 function emptyBucket(): Bucket {
