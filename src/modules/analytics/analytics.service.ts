@@ -18,6 +18,7 @@ import { Transaction } from '../transactions/transaction.schema';
 import { Account } from '../accounts/account.schema';
 import { Investment } from '../investments/investment.schema';
 import { Category } from '../categories/category.schema';
+import { buildTxFilter } from './tx-filter';
 
 type TxRow = {
   type: string;
@@ -47,6 +48,7 @@ type Bucket = {
   emi: number;
   partPayment: number;
   investment: number;
+  transfer: number;
   actualSpent: number;
   allSpent: number;
   credit: number;
@@ -78,9 +80,10 @@ export class AnalyticsService {
     const yearStart = startOfIstDay(`${toZonedTime(end, IST).getFullYear() - 3}-01-01`);
     const queryStart = earliest(start, prev?.start, chartStart, yearStart);
 
-    const cats = await this.categories.find({
-      $or: [{ isSystem: true }, { userId: uid }],
-    });
+    const cats = await this.categories
+      .find({ $or: [{ isSystem: true }, { userId: uid }] })
+      .lean()
+      .exec();
     const catById = new Map(cats.map((c) => [String(c._id), c]));
     const txFilter = buildTxFilter(uid, queryStart, end, filters, cats);
     const filterKey = [
@@ -89,7 +92,7 @@ export class AnalyticsService {
       filters.subcategoryId || '',
       filters.type || '',
     ].join(':');
-    const key = `analytics:v4:${userId}:${isoDate(start)}:${endIso}:${range}:${filterKey}`;
+    const key = `analytics:v5:${userId}:${isoDate(start)}:${endIso}:${range}:${filterKey}`;
     const cached = await this.cache.getJson<unknown>(key);
     if (cached) return cached;
 
@@ -218,6 +221,7 @@ export class AnalyticsService {
       emiPaise: totals.emi,
       partPaymentPaise: totals.partPayment,
       investmentPaise: totals.investment,
+      transferPaise: totals.transfer,
       actualSpentPaise: totals.actualSpent,
       allSpentPaise: totals.allSpent,
       creditPaise: totals.credit,
@@ -262,6 +266,8 @@ export class AnalyticsService {
         emi: v.emi,
         investment: v.investment,
         partPayment: v.partPayment,
+        interest: v.interest,
+        transfer: v.transfer,
         credit: v.credit,
         debit: v.debit,
       })),
@@ -277,6 +283,8 @@ export class AnalyticsService {
           emi: v.emi,
           investment: v.investment,
           partPayment: v.partPayment,
+          interest: v.interest,
+          transfer: v.transfer,
           credit: v.credit,
           debit: v.debit,
         })),
@@ -355,37 +363,6 @@ export class AnalyticsService {
   }
 }
 
-function buildTxFilter(
-  uid: Types.ObjectId,
-  queryStart: Date,
-  end: Date,
-  filters: AnalyticsFilters,
-  cats: Array<{ _id: Types.ObjectId; parentId?: Types.ObjectId }>,
-) {
-  const find: Record<string, unknown> = {
-    userId: uid,
-    isDeleted: false,
-    date: { $gte: queryStart, $lte: end },
-  };
-  if (filters.accountId && Types.ObjectId.isValid(filters.accountId)) {
-    find.accountId = new Types.ObjectId(filters.accountId);
-  }
-  if (filters.type) {
-    find.type = filters.type === 'expense' ? { $in: ['expense', 'fee'] } : filters.type;
-  }
-  if (filters.subcategoryId && Types.ObjectId.isValid(filters.subcategoryId)) {
-    find.subcategoryId = new Types.ObjectId(filters.subcategoryId);
-  } else if (filters.categoryId && Types.ObjectId.isValid(filters.categoryId)) {
-    const parent = filters.categoryId;
-    const ids = [
-      new Types.ObjectId(parent),
-      ...cats.filter((c) => String(c.parentId) === parent).map((c) => c._id),
-    ];
-    find.$or = [{ categoryId: { $in: ids } }, { subcategoryId: { $in: ids } }];
-  }
-  return find;
-}
-
 function emptyBucket(): Bucket {
   return {
     income: 0,
@@ -396,6 +373,7 @@ function emptyBucket(): Bucket {
     emi: 0,
     partPayment: 0,
     investment: 0,
+    transfer: 0,
     actualSpent: 0,
     allSpent: 0,
     credit: 0,
@@ -423,7 +401,12 @@ function addToBucket(b: Bucket, t: TxRow) {
   const amt = t.amountPaise ?? 0;
   if (isCreditSide(t)) b.credit += amt;
   else b.debit += amt;
-  if (t.excludedFromReports || type === 'transfer') {
+  if (t.excludedFromReports) {
+    finish(b);
+    return;
+  }
+  if (type === 'transfer') {
+    b.transfer += amt;
     finish(b);
     return;
   }
